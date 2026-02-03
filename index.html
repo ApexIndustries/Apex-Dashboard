@@ -13,7 +13,7 @@
     />
   </head>
   <body>
-    <div class="app" data-theme="dark">
+    <div class="app" data-theme="dark" data-visual="neon">
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-icon">A</div>
@@ -51,6 +51,8 @@
               <input type="text" placeholder="Search modules, automations, data" />
             </div>
             <button class="pill" id="themeToggle">Toggle theme</button>
+            <button class="pill" id="neonToggle">Neon mode</button>
+            <button class="pill" id="consoleToggle">Console mode</button>
             <button class="pill primary">Launch workflow</button>
           </div>
         </header>
@@ -85,154 +87,49 @@
           </div>
         </section>
 
-        <section class="grid">
-          <article class="card">
-            <div class="card-header">
-              <h4>Realtime monitoring</h4>
-              <span class="status positive">Stable</span>
-            </div>
-            <p class="muted">Infrastructure across 14 regions with predictive uptime alerts.</p>
-            <div class="mini-chart" id="uptimeChart"></div>
-            <div class="card-footer">
-              <div>
-                <p class="label">Incidents</p>
-                <strong>0</strong>
-              </div>
-              <div>
-                <p class="label">Performance</p>
-                <strong>+6.4%</strong>
-              </div>
-            </div>
-          </article>
+        <section class="control-panel">
+          <div class="control-group">
+            <label class="label" for="dashboardSelect">Dashboard</label>
+            <select id="dashboardSelect" class="select">
+              <option value="personal">Personal</option>
+              <option value="team">Team</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label class="label" for="roleSelect">Role</label>
+            <select id="roleSelect" class="select">
+              <option value="admin">Admin</option>
+              <option value="viewer">Viewer</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label class="label" for="encryptionToggle">Encrypt config</label>
+            <button class="pill ghost" id="encryptionToggle">Disabled</button>
+          </div>
+          <div class="control-group">
+            <label class="label" for="soundToggle">Ambient sound</label>
+            <button class="pill ghost" id="soundToggle">Muted</button>
+          </div>
+          <div class="control-actions">
+            <button class="pill" id="exportConfig">Export config</button>
+            <button class="pill" id="importConfig">Import config</button>
+            <input type="file" id="importInput" accept="application/json" hidden />
+          </div>
+        </section>
 
-          <article class="card">
-            <div class="card-header">
-              <h4>Productivity flow</h4>
-              <span class="status neutral">On track</span>
+        <section class="widget-area">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Widgets</p>
+              <h3>Modular intelligence grid</h3>
             </div>
-            <div class="timeline">
-              <div>
-                <p class="label">08:30</p>
-                <p>Global sync with Tokyo ops</p>
-              </div>
-              <div>
-                <p class="label">10:00</p>
-                <p>Release readiness review</p>
-              </div>
-              <div>
-                <p class="label">13:30</p>
-                <p>Partner integration rollout</p>
-              </div>
-            </div>
-            <button class="pill ghost">Open calendar</button>
-          </article>
-
-          <article class="card">
-            <div class="card-header">
-              <h4>Weather intelligence</h4>
-              <span class="status neutral">San Francisco</span>
-            </div>
-            <div class="weather">
-              <div>
-                <h3 id="temperature">72°</h3>
-                <p class="muted" id="conditions">Clear · 12% humidity</p>
-              </div>
-              <div class="weather-grid">
-                <div>
-                  <p class="label">Wind</p>
-                  <strong id="wind">6 mph</strong>
-                </div>
-                <div>
-                  <p class="label">AQI</p>
-                  <strong id="aqi">42</strong>
-                </div>
-                <div>
-                  <p class="label">UV</p>
-                  <strong id="uv">Low</strong>
-                </div>
-              </div>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="card-header">
-              <h4>Pipeline velocity</h4>
-              <span class="status positive">+12% this week</span>
-            </div>
-            <div class="pipeline">
-              <div>
-                <p class="label">Deployments</p>
-                <strong>48</strong>
-              </div>
-              <div>
-                <p class="label">Pending approvals</p>
-                <strong>6</strong>
-              </div>
-              <div>
-                <p class="label">Avg. lead time</p>
-                <strong>4h 32m</strong>
-              </div>
-            </div>
-            <button class="pill ghost">Open pipelines</button>
-          </article>
-
-          <article class="card wide">
-            <div class="card-header">
-              <h4>Device ecosystem</h4>
-              <span class="status neutral">128 devices</span>
-            </div>
-            <div class="device-grid">
-              <div class="device">
-                <p class="label">Edge Nodes</p>
-                <strong>46</strong>
-                <span class="status positive">All green</span>
-              </div>
-              <div class="device">
-                <p class="label">Workstations</p>
-                <strong>62</strong>
-                <span class="status neutral">2 require updates</span>
-              </div>
-              <div class="device">
-                <p class="label">IoT Sensors</p>
-                <strong>20</strong>
-                <span class="status warning">1 offline</span>
-              </div>
-            </div>
-          </article>
-
-          <article class="card wide">
-            <div class="card-header">
-              <h4>Mission priorities</h4>
-              <span class="status neutral">Q3 objectives</span>
-            </div>
-            <ul class="priority-list">
-              <li>
-                <div>
-                  <h5>Launch secure ops mesh</h5>
-                  <p class="muted">Federate data pipelines with zero-trust routing.</p>
-                </div>
-                <button class="pill ghost">Track</button>
-              </li>
-              <li>
-                <div>
-                  <h5>Elevate partner experience</h5>
-                  <p class="muted">Unified portal for project signals and onboarding.</p>
-                </div>
-                <button class="pill ghost">Track</button>
-              </li>
-              <li>
-                <div>
-                  <h5>Optimize energy footprint</h5>
-                  <p class="muted">AI-less anomaly detection with smart baselines.</p>
-                </div>
-                <button class="pill ghost">Track</button>
-              </li>
-            </ul>
-          </article>
+            <p class="muted">Drag, resize, and orchestrate modules across teams.</p>
+          </div>
+          <div class="widget-grid" id="widgetGrid"></div>
         </section>
       </main>
     </div>
 
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>
