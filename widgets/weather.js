@@ -38,17 +38,20 @@ export default class WeatherWidget extends Widget {
 
   async updateData() {
     const config = this.dashboard.config.dataSources?.weather || {};
-    let payload;
     try {
-      payload = await fetchWeather(config);
+      const payload = await fetchWeather(config);
+      const { temp, conditions, wind, aqi, uv } = payload;
+      this.tempEl.textContent = temp;
+      this.conditionsEl.textContent = conditions;
+      this.windEl.querySelector('strong').textContent = wind;
+      this.aqiEl.querySelector('strong').textContent = aqi;
+      this.uvEl.querySelector('strong').textContent = uv;
     } catch (error) {
-      payload = await fetchWeather({ provider: 'mock' });
+      this.tempEl.textContent = '—';
+      this.conditionsEl.textContent = 'Weather feed unavailable';
+      this.windEl.querySelector('strong').textContent = '—';
+      this.aqiEl.querySelector('strong').textContent = '—';
+      this.uvEl.querySelector('strong').textContent = '—';
     }
-    const { temp, conditions, wind, aqi, uv } = payload;
-    this.tempEl.textContent = temp;
-    this.conditionsEl.textContent = conditions;
-    this.windEl.querySelector('strong').textContent = wind;
-    this.aqiEl.querySelector('strong').textContent = aqi;
-    this.uvEl.querySelector('strong').textContent = uv;
   }
 }

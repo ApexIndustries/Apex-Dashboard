@@ -1,4 +1,4 @@
-import { getMockTelemetry } from './dataSources.js';
+import { fetchTelemetrySnapshot } from './dataSources.js';
 
 const app = document.querySelector('.app');
 const themeToggle = document.getElementById('themeToggle');
@@ -22,8 +22,11 @@ const defaultConfig = {
   encryptionEnabled: false,
   dataSources: {
     calendar: {
-      provider: 'mock',
+      provider: 'github',
       refreshMs: 300000,
+      github: {
+        org: 'openai',
+      },
       google: {
         apiKey: '',
         calendarId: '',
@@ -34,8 +37,16 @@ const defaultConfig = {
       },
     },
     weather: {
-      provider: 'mock',
+      provider: 'openMeteo',
       refreshMs: 60000,
+      openMeteo: {
+        units: 'imperial',
+        location: {
+          city: 'San Francisco',
+          lat: 37.7749,
+          lon: -122.4194,
+        },
+      },
       openWeather: {
         apiKey: '',
         units: 'imperial',
@@ -419,7 +430,7 @@ class TelemetryStream {
   constructor(config) {
     this.config = config;
     this.listeners = new Set();
-    this.mockInterval = null;
+    this.pollInterval = null;
     this.eventSource = null;
     this.start();
   }
@@ -433,12 +444,25 @@ class TelemetryStream {
     this.listeners.forEach((handler) => handler(payload));
   }
 
-  startMock() {
-    if (this.mockInterval) return;
+  startPolling() {
+    if (this.pollInterval) return;
     const refreshMs = this.config?.refreshMs || 5000;
-    this.mockInterval = window.setInterval(() => {
-      this.emit(getMockTelemetry());
-    }, refreshMs);
+    const poll = async () => {
+      try {
+        const payload = await fetchTelemetrySnapshot({
+          endpoints: this.config?.endpoints,
+        });
+        this.emit(payload);
+      } catch (error) {
+        this.emit({
+          type: 'telemetry',
+          metrics: {},
+          server: { uptime: '—', incidents: '—', services: [] },
+        });
+      }
+    };
+    poll();
+    this.pollInterval = window.setInterval(poll, refreshMs);
   }
 
   start() {
@@ -456,15 +480,15 @@ class TelemetryStream {
         };
         this.eventSource.onerror = () => {
           this.eventSource.close();
-          this.startMock();
+          this.startPolling();
         };
         return;
       } catch (error) {
-        this.startMock();
+        this.startPolling();
         return;
       }
     }
-    this.startMock();
+    this.startPolling();
   }
 }
 

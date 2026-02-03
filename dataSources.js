@@ -1,39 +1,14 @@
 const DEFAULT_TIMEOUT = 8000;
-
-const mockCalendarEvents = [
-  { title: 'Ops sync', time: '09:30' },
-  { title: 'Security briefing', time: '12:00' },
-  { title: 'Release checkpoint', time: '15:45' },
+const DEFAULT_ENDPOINTS = [
+  'https://api.github.com',
+  'https://api.github.com/rate_limit',
+  'https://api.github.com/meta',
 ];
 
-const mockWeather = {
-  temp: '72°',
-  conditions: 'Clear · 12% humidity',
-  wind: '6 mph',
-  aqi: '42',
-  uv: 'Low',
-};
-
-const mockServerStatus = {
-  uptime: '99.98%',
-  services: [
-    { name: 'Core API', status: 'Stable' },
-    { name: 'Edge Mesh', status: 'Stable' },
-    { name: 'Data Lake', status: 'Syncing' },
-  ],
-  incidents: '0 incidents',
-};
-
-const mockGithubPipelines = {
-  summary: '5 pipelines',
-  items: [
-    { name: 'apex-core', status: 'Passing' },
-    { name: 'sentinel-ui', status: 'Deploying' },
-    { name: 'pulse-api', status: 'Queued' },
-    { name: 'nebula-mobile', status: 'Passing' },
-  ],
-  lastSync: 'Last sync 2m ago',
-};
+const DEFAULT_GITHUB_REPOS = [
+  { owner: 'openai', repo: 'openai-cookbook' },
+  { owner: 'vercel', repo: 'next.js' },
+];
 
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
@@ -49,6 +24,11 @@ async function fetchWithTimeout(url, options = {}) {
   }
 }
 
+async function fetchJson(url, options) {
+  const response = await fetchWithTimeout(url, options);
+  return response.json();
+}
+
 function formatEventTime(dateString) {
   if (!dateString) return '';
   const date = new Date(dateString);
@@ -56,8 +36,84 @@ function formatEventTime(dateString) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function resolveEndpointConfig(endpoints) {
+  if (!Array.isArray(endpoints) || endpoints.length === 0) {
+    return DEFAULT_ENDPOINTS.map((url) => ({ url }));
+  }
+  return endpoints.map((entry) =>
+    typeof entry === 'string' ? { url: entry } : { url: entry.url, name: entry.name },
+  );
+}
+
+function mapWeatherCode(code) {
+  const map = new Map([
+    [0, 'Clear'],
+    [1, 'Mainly clear'],
+    [2, 'Partly cloudy'],
+    [3, 'Overcast'],
+    [45, 'Fog'],
+    [48, 'Depositing rime fog'],
+    [51, 'Light drizzle'],
+    [53, 'Moderate drizzle'],
+    [55, 'Dense drizzle'],
+    [61, 'Slight rain'],
+    [63, 'Moderate rain'],
+    [65, 'Heavy rain'],
+    [71, 'Slight snow'],
+    [73, 'Moderate snow'],
+    [75, 'Heavy snow'],
+    [80, 'Rain showers'],
+    [81, 'Heavy rain showers'],
+    [82, 'Violent rain showers'],
+    [95, 'Thunderstorm'],
+  ]);
+  if (map.has(code)) return map.get(code);
+  return 'Cloudy';
+}
+
+async function fetchEndpointStatus(endpoint) {
+  const started = Date.now();
+  const response = await fetchWithTimeout(endpoint.url);
+  const latency = Date.now() - started;
+  let name = endpoint.name;
+  try {
+    const data = await response.clone().json();
+    if (!name) {
+      name = data?.name || data?.service?.name;
+    }
+  } catch (error) {
+    // ignore JSON parse failures
+  }
+  if (!name) {
+    const url = new URL(endpoint.url);
+    name = `${url.hostname}${url.pathname !== '/' ? url.pathname : ''}`;
+  }
+  const status = latency > 900 ? 'Degraded' : 'Stable';
+  return { name, status, latency, ok: response.ok };
+}
+
+function summarizeStatus(results) {
+  const total = results.length || 1;
+  const successCount = results.filter((result) => result.ok).length;
+  const failures = total - successCount;
+  const uptime = `${((successCount / total) * 100).toFixed(2)}%`;
+  const incidents = failures ? `${failures} incidents` : '0 incidents';
+  return {
+    uptime,
+    incidents,
+    failures,
+    services: results.map((result) => ({
+      name: result.name,
+      status: result.ok ? result.status : 'Offline',
+    })),
+    latencyAvg: Math.round(
+      results.reduce((sum, result) => sum + result.latency, 0) / total,
+    ),
+  };
+}
+
 export async function fetchCalendarEvents(config = {}) {
-  const provider = config.provider || 'mock';
+  const provider = config.provider || 'github';
   if (provider === 'google' && config.google?.apiKey && config.google?.calendarId) {
     const timeMin = new Date().toISOString();
     const url = new URL(
@@ -71,8 +127,7 @@ export async function fetchCalendarEvents(config = {}) {
     url.searchParams.set('singleEvents', 'true');
     url.searchParams.set('orderBy', 'startTime');
 
-    const response = await fetchWithTimeout(url.toString());
-    const data = await response.json();
+    const data = await fetchJson(url.toString());
     const items = Array.isArray(data.items) ? data.items : [];
     if (!items.length) return [];
     return items.map((event) => ({
@@ -82,12 +137,11 @@ export async function fetchCalendarEvents(config = {}) {
   }
 
   if (provider === 'outlook' && config.outlook?.endpoint) {
-    const response = await fetchWithTimeout(config.outlook.endpoint, {
+    const data = await fetchJson(config.outlook.endpoint, {
       headers: config.outlook.token
         ? { Authorization: `Bearer ${config.outlook.token}` }
         : undefined,
     });
-    const data = await response.json();
     const items = Array.isArray(data.value) ? data.value : [];
     return items.slice(0, 5).map((event) => ({
       title: event.subject || 'Untitled',
@@ -95,11 +149,24 @@ export async function fetchCalendarEvents(config = {}) {
     }));
   }
 
-  return mockCalendarEvents;
+  if (provider === 'github') {
+    const org = config.github?.org || 'openai';
+    const url = `https://api.github.com/orgs/${org}/events?per_page=5`;
+    const items = await fetchJson(url);
+    if (!Array.isArray(items) || items.length === 0) return [];
+    return items.map((event) => ({
+      title: `${event.type?.replace(/Event$/, '') || 'Activity'} · ${
+        event.repo?.name || org
+      }`,
+      time: formatEventTime(event.created_at),
+    }));
+  }
+
+  return [];
 }
 
 export async function fetchWeather(config = {}) {
-  const provider = config.provider || 'mock';
+  const provider = config.provider || 'openMeteo';
   if (provider === 'openWeather' && config.openWeather?.apiKey) {
     const { apiKey, units = 'imperial', location = {} } = config.openWeather;
     const url = new URL('https://api.openweathermap.org/data/2.5/weather');
@@ -112,8 +179,7 @@ export async function fetchWeather(config = {}) {
     url.searchParams.set('appid', apiKey);
     url.searchParams.set('units', units);
 
-    const response = await fetchWithTimeout(url.toString());
-    const data = await response.json();
+    const data = await fetchJson(url.toString());
     return {
       temp: `${Math.round(data.main.temp)}°`,
       conditions: `${data.weather?.[0]?.main || 'Clear'} · ${data.main.humidity}% humidity`,
@@ -123,73 +189,134 @@ export async function fetchWeather(config = {}) {
     };
   }
 
-  return mockWeather;
-}
-
-export async function fetchServerStatus(config = {}) {
-  if (Array.isArray(config.endpoints) && config.endpoints.length > 0) {
-    const responses = await Promise.all(
-      config.endpoints.map((endpoint) => fetchWithTimeout(endpoint).then((res) => res.json())),
+  if (provider === 'openMeteo') {
+    const location = config.openMeteo?.location || config.openWeather?.location || {};
+    const units = config.openMeteo?.units || 'imperial';
+    const latitude = Number(location.lat || 37.7749);
+    const longitude = Number(location.lon || -122.4194);
+    const weatherUrl = new URL('https://api.open-meteo.com/v1/forecast');
+    weatherUrl.searchParams.set('latitude', latitude);
+    weatherUrl.searchParams.set('longitude', longitude);
+    weatherUrl.searchParams.set(
+      'current',
+      'temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code,uv_index',
     );
-    const services = responses.map((item, index) => ({
-      name: item.name || `Service ${index + 1}`,
-      status: item.status || 'Stable',
-    }));
-    const uptime = responses[0]?.uptime || '99.9%';
-    const incidents = responses[0]?.incidents || '0 incidents';
-    return { uptime, services, incidents };
-  }
+    weatherUrl.searchParams.set('timezone', 'auto');
+    if (units === 'imperial') {
+      weatherUrl.searchParams.set('temperature_unit', 'fahrenheit');
+      weatherUrl.searchParams.set('wind_speed_unit', 'mph');
+    }
 
-  return mockServerStatus;
-}
+    const weatherData = await fetchJson(weatherUrl.toString());
+    const current = weatherData.current || {};
+    const aqiUrl = new URL('https://air-quality-api.open-meteo.com/v1/air-quality');
+    aqiUrl.searchParams.set('latitude', latitude);
+    aqiUrl.searchParams.set('longitude', longitude);
+    aqiUrl.searchParams.set('current', 'us_aqi');
 
-export async function fetchGithubProjects(config = {}) {
-  if (Array.isArray(config.repositories) && config.repositories.length > 0) {
-    const headers = config.token ? { Authorization: `Bearer ${config.token}` } : undefined;
-    const results = await Promise.all(
-      config.repositories.slice(0, 4).map(async (repo) => {
-        const url = `https://api.github.com/repos/${repo.owner}/${repo.repo}/actions/runs?per_page=1`;
-        const response = await fetchWithTimeout(url, { headers });
-        const data = await response.json();
-        const run = data.workflow_runs?.[0];
-        return {
-          name: `${repo.owner}/${repo.repo}`,
-          status: run?.conclusion ? run.conclusion.replace('_', ' ') : 'Queued',
-        };
-      }),
-    );
+    let aqiValue = '—';
+    try {
+      const aqiData = await fetchJson(aqiUrl.toString());
+      const aqi = aqiData.current?.us_aqi;
+      if (typeof aqi === 'number') aqiValue = String(aqi);
+    } catch (error) {
+      aqiValue = '—';
+    }
+
     return {
-      summary: `${config.repositories.length} pipelines`,
-      items: results,
-      lastSync: `Last sync ${new Date().toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      })}`,
+      temp: `${Math.round(current.temperature_2m)}°`,
+      conditions: `${mapWeatherCode(current.weather_code)} · ${
+        current.relative_humidity_2m
+      }% humidity`,
+      wind: `${Math.round(current.wind_speed_10m)} ${units === 'imperial' ? 'mph' : 'km/h'}`,
+      aqi: aqiValue,
+      uv: current.uv_index ? String(current.uv_index) : '—',
     };
   }
 
-  return mockGithubPipelines;
+  return {
+    temp: '—',
+    conditions: 'Unavailable',
+    wind: '—',
+    aqi: '—',
+    uv: '—',
+  };
 }
 
-export function getMockTelemetry() {
-  const uptime = 99.9 + Math.random() * 0.09;
-  const latency = 180 + Math.round(Math.random() * 80);
-  const alerts = Math.random() > 0.7 ? 2 : 0;
+export async function fetchServerStatus(config = {}) {
+  const endpoints = resolveEndpointConfig(config.endpoints);
+  const results = await Promise.all(
+    endpoints.map(async (endpoint) => {
+      try {
+        return await fetchEndpointStatus(endpoint);
+      } catch (error) {
+        return {
+          name: endpoint.name || endpoint.url,
+          status: 'Offline',
+          latency: DEFAULT_TIMEOUT,
+          ok: false,
+        };
+      }
+    }),
+  );
+  return summarizeStatus(results);
+}
+
+export async function fetchGithubProjects(config = {}) {
+  const repositories =
+    Array.isArray(config.repositories) && config.repositories.length > 0
+      ? config.repositories
+      : DEFAULT_GITHUB_REPOS;
+  const headers = config.token ? { Authorization: `Bearer ${config.token}` } : undefined;
+  const results = await Promise.all(
+    repositories.slice(0, 4).map(async (repo) => {
+      const url = `https://api.github.com/repos/${repo.owner}/${repo.repo}/actions/runs?per_page=1`;
+      const data = await fetchJson(url, { headers });
+      const run = data.workflow_runs?.[0];
+      return {
+        name: `${repo.owner}/${repo.repo}`,
+        status: run?.conclusion ? run.conclusion.replace('_', ' ') : 'Queued',
+      };
+    }),
+  );
+  return {
+    summary: `${repositories.length} pipelines`,
+    items: results,
+    lastSync: `Last sync ${new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    })}`,
+  };
+}
+
+export async function fetchTelemetrySnapshot(config = {}) {
+  const endpoints = resolveEndpointConfig(config.endpoints);
+  const results = await Promise.all(
+    endpoints.map(async (endpoint) => {
+      try {
+        return await fetchEndpointStatus(endpoint);
+      } catch (error) {
+        return {
+          name: endpoint.name || endpoint.url,
+          status: 'Offline',
+          latency: DEFAULT_TIMEOUT,
+          ok: false,
+        };
+      }
+    }),
+  );
+  const summary = summarizeStatus(results);
   return {
     type: 'telemetry',
     metrics: {
-      availability: `${uptime.toFixed(2)}%`,
-      latency: `${latency}ms`,
-      alerts: `${alerts} open`,
+      availability: summary.uptime,
+      latency: `${summary.latencyAvg}ms`,
+      alerts: `${summary.failures} open`,
     },
     server: {
-      uptime: `${uptime.toFixed(2)}%`,
-      incidents: alerts ? '1 incident' : '0 incidents',
-      services: [
-        { name: 'Core API', status: uptime > 99.95 ? 'Stable' : 'Degraded' },
-        { name: 'Edge Mesh', status: latency > 230 ? 'Recovering' : 'Stable' },
-        { name: 'Data Lake', status: 'Syncing' },
-      ],
+      uptime: summary.uptime,
+      incidents: summary.incidents,
+      services: summary.services,
     },
   };
 }
