@@ -1,22 +1,51 @@
 import { Widget } from '../app.js';
+import { fetchGithubProjects } from '../dataSources.js';
 
 export default class GithubProjectsWidget extends Widget {
   renderContent() {
     const wrapper = document.createElement('div');
     wrapper.className = 'widget-content';
 
-    const stat = document.createElement('div');
-    stat.className = 'widget-stat';
-    stat.textContent = '5 pipelines';
+    this.stat = document.createElement('div');
+    this.stat.className = 'widget-stat';
+    this.stat.textContent = '—';
 
-    const list = document.createElement('ul');
-    list.className = 'widget-list';
-    [
-      { name: 'apex-core', status: 'Passing' },
-      { name: 'sentinel-ui', status: 'Deploying' },
-      { name: 'pulse-api', status: 'Queued' },
-      { name: 'nebula-mobile', status: 'Passing' },
-    ].forEach((repo) => {
+    this.list = document.createElement('ul');
+    this.list.className = 'widget-list';
+
+    const footer = document.createElement('div');
+    footer.className = 'widget-footer';
+    const action = document.createElement('button');
+    action.className = 'pill ghost';
+    action.textContent = 'Open pipelines';
+    this.meta = document.createElement('span');
+    this.meta.className = 'label';
+    this.meta.textContent = 'Awaiting sync';
+    footer.append(action, this.meta);
+
+    wrapper.append(this.stat, this.list, footer);
+    this.updateData();
+    const refreshMs = this.dashboard.config.dataSources?.github?.refreshMs || 60000;
+    this.interval = window.setInterval(() => this.updateData(), refreshMs);
+    return wrapper;
+  }
+
+  async updateData() {
+    const config = this.dashboard.config.dataSources?.github || {};
+    try {
+      const payload = await fetchGithubProjects(config);
+      this.renderProjects(payload);
+    } catch (error) {
+      const payload = await fetchGithubProjects({});
+      this.renderProjects(payload);
+    }
+  }
+
+  renderProjects(payload) {
+    this.stat.textContent = payload.summary;
+    this.meta.textContent = payload.lastSync;
+    this.list.innerHTML = '';
+    payload.items.forEach((repo) => {
       const li = document.createElement('li');
       const label = document.createElement('span');
       label.textContent = repo.name;
@@ -24,20 +53,7 @@ export default class GithubProjectsWidget extends Widget {
       badge.className = 'widget-badge';
       badge.textContent = repo.status;
       li.append(label, badge);
-      list.appendChild(li);
+      this.list.appendChild(li);
     });
-
-    const footer = document.createElement('div');
-    footer.className = 'widget-footer';
-    const action = document.createElement('button');
-    action.className = 'pill ghost';
-    action.textContent = 'Open pipelines';
-    const meta = document.createElement('span');
-    meta.className = 'label';
-    meta.textContent = 'Last sync 2m ago';
-    footer.append(action, meta);
-
-    wrapper.append(stat, list, footer);
-    return wrapper;
   }
 }
