@@ -1,3 +1,5 @@
+import { getMockTelemetry } from './dataSources.js';
+
 const app = document.querySelector('.app');
 const themeToggle = document.getElementById('themeToggle');
 const neonToggle = document.getElementById('neonToggle');
@@ -14,9 +16,54 @@ const STORAGE_KEY = 'apex-dashboard-config';
 const KEY_STORAGE = 'apex-dashboard-key';
 
 const widgetRegistry = {};
+const dataSourceRegistry = {};
 
 const defaultConfig = {
   encryptionEnabled: false,
+  dataSources: {
+    calendar: {
+      provider: 'mock',
+      refreshMs: 300000,
+      google: {
+        apiKey: '',
+        calendarId: '',
+      },
+      outlook: {
+        endpoint: '',
+        token: '',
+      },
+    },
+    weather: {
+      provider: 'mock',
+      refreshMs: 60000,
+      openWeather: {
+        apiKey: '',
+        units: 'imperial',
+        location: {
+          city: 'San Francisco',
+          lat: '',
+          lon: '',
+        },
+      },
+    },
+    serverStatus: {
+      refreshMs: 15000,
+      endpoints: [],
+    },
+    github: {
+      refreshMs: 60000,
+      token: '',
+      repositories: [
+        { owner: 'openai', repo: 'openai-cookbook' },
+        { owner: 'vercel', repo: 'next.js' },
+      ],
+    },
+  },
+  realtime: {
+    enabled: true,
+    sseUrl: '',
+    refreshMs: 5000,
+  },
   dashboards: {
     personal: {
       id: 'personal',
@@ -159,6 +206,7 @@ class Widget {
   constructor(config, dashboard) {
     this.config = config;
     this.dashboard = dashboard;
+    this.telemetry = dashboard.telemetry;
     this.element = null;
   }
 
@@ -304,9 +352,10 @@ class Widget {
 }
 
 class Dashboard {
-  constructor(config, storage) {
+  constructor(config, storage, telemetry) {
     this.config = config;
     this.storage = storage;
+    this.telemetry = telemetry;
     this.grid = document.getElementById('widgetGrid');
     this.columns = 12;
     this.rowHeight = 110;
@@ -366,20 +415,106 @@ class Dashboard {
   }
 }
 
+class TelemetryStream {
+  constructor(config) {
+    this.config = config;
+    this.listeners = new Set();
+    this.mockInterval = null;
+    this.eventSource = null;
+    this.start();
+  }
+
+  subscribe(handler) {
+    this.listeners.add(handler);
+    return () => this.listeners.delete(handler);
+  }
+
+  emit(payload) {
+    this.listeners.forEach((handler) => handler(payload));
+  }
+
+  startMock() {
+    if (this.mockInterval) return;
+    const refreshMs = this.config?.refreshMs || 5000;
+    this.mockInterval = window.setInterval(() => {
+      this.emit(getMockTelemetry());
+    }, refreshMs);
+  }
+
+  start() {
+    if (!this.config?.enabled) return;
+    if (this.config.sseUrl) {
+      try {
+        this.eventSource = new EventSource(this.config.sseUrl);
+        this.eventSource.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            this.emit(payload);
+          } catch (error) {
+            this.emit({ type: 'raw', data: event.data });
+          }
+        };
+        this.eventSource.onerror = () => {
+          this.eventSource.close();
+          this.startMock();
+        };
+        return;
+      } catch (error) {
+        this.startMock();
+        return;
+      }
+    }
+    this.startMock();
+  }
+}
+
+function createPluginAPI(dashboard) {
+  return {
+    registerWidget: (type, widgetClass) => {
+      if (!type || typeof widgetClass !== 'function') return;
+      widgetRegistry[type] = widgetClass;
+    },
+    registerDataSource: (name, handler) => {
+      if (!name || typeof handler !== 'function') return;
+      dataSourceRegistry[name] = handler;
+    },
+    getConfig: () => dashboard.config,
+    onTelemetry: (handler) => dashboard.telemetry?.subscribe(handler),
+  };
+}
+
 async function loadPlugins(dashboard) {
   const manifestResponse = await fetch('./plugins/manifest.json').catch(() => null);
   if (!manifestResponse || !manifestResponse.ok) return;
   const manifest = await manifestResponse.json();
   if (!Array.isArray(manifest.plugins)) return;
+  const api = createPluginAPI(dashboard);
   await Promise.all(
-    manifest.plugins.map((pluginPath) =>
-      import(pluginPath).then((module) => {
-        if (module.init) {
-          module.init(dashboard);
+    manifest.plugins.map((plugin) => {
+      const pluginPath = typeof plugin === 'string' ? plugin : plugin.path;
+      const options = typeof plugin === 'object' ? plugin.options : undefined;
+      if (!pluginPath) return Promise.resolve();
+      return import(pluginPath).then((module) => {
+        const meta = module.meta || {};
+        if (meta.apiVersion && meta.apiVersion !== '1.0') {
+          console.warn(`Plugin ${meta.name || pluginPath} incompatible API version.`);
+          return;
         }
-      }),
-    ),
+        if (module.init) {
+          module.init(api, options);
+        }
+      });
+    }),
   );
+}
+
+function syncHeroMetrics(metrics = {}) {
+  const availability = document.getElementById('metricAvailability');
+  const latency = document.getElementById('metricLatency');
+  const alerts = document.getElementById('metricAlerts');
+  if (availability && metrics.availability) availability.textContent = metrics.availability;
+  if (latency && metrics.latency) latency.textContent = metrics.latency;
+  if (alerts && metrics.alerts) alerts.textContent = metrics.alerts;
 }
 
 async function init() {
@@ -397,12 +532,30 @@ async function init() {
   const storage = new StorageManager();
   const storedConfig = await storage.load();
   const config = {
+    ...defaultConfig,
     ...storedConfig,
+    dataSources: {
+      ...defaultConfig.dataSources,
+      ...storedConfig.dataSources,
+    },
+    realtime: {
+      ...defaultConfig.realtime,
+      ...storedConfig.realtime,
+    },
+    dashboards: storedConfig.dashboards || defaultConfig.dashboards,
     activeDashboardId: storedConfig.activeDashboardId || 'personal',
-    activeRole: storedConfig.activeRole || storedConfig.dashboards.personal.role,
+    activeRole:
+      storedConfig.activeRole || storedConfig.dashboards?.personal?.role || 'admin',
   };
 
-  const dashboard = new Dashboard(config, storage);
+  const telemetry = new TelemetryStream(config.realtime);
+  telemetry.subscribe((payload) => {
+    if (payload.type === 'telemetry' && payload.metrics) {
+      syncHeroMetrics(payload.metrics);
+    }
+  });
+
+  const dashboard = new Dashboard(config, storage, telemetry);
   dashboard.render();
 
   themeToggle.addEventListener('click', () => {

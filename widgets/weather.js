@@ -1,33 +1,10 @@
 import { Widget } from '../app.js';
-
-const weatherStates = [
-  {
-    temp: '72°',
-    conditions: 'Clear · 12% humidity',
-    wind: '6 mph',
-    aqi: '42',
-    uv: 'Low',
-  },
-  {
-    temp: '68°',
-    conditions: 'Marine layer · 20% humidity',
-    wind: '9 mph',
-    aqi: '39',
-    uv: 'Moderate',
-  },
-  {
-    temp: '74°',
-    conditions: 'Sunset glow · 15% humidity',
-    wind: '4 mph',
-    aqi: '45',
-    uv: 'Low',
-  },
-];
+import { fetchWeather } from '../dataSources.js';
 
 export default class WeatherWidget extends Widget {
   constructor(config, dashboard) {
     super(config, dashboard);
-    this.stateIndex = 0;
+    this.interval = null;
   }
 
   renderContent() {
@@ -54,17 +31,24 @@ export default class WeatherWidget extends Widget {
     wrapper.append(this.tempEl, this.conditionsEl, grid);
 
     this.updateData();
-    this.interval = window.setInterval(() => this.updateData(), 6000);
+    const refreshMs = this.dashboard.config.dataSources?.weather?.refreshMs || 60000;
+    this.interval = window.setInterval(() => this.updateData(), refreshMs);
     return wrapper;
   }
 
-  updateData() {
-    const { temp, conditions, wind, aqi, uv } = weatherStates[this.stateIndex];
+  async updateData() {
+    const config = this.dashboard.config.dataSources?.weather || {};
+    let payload;
+    try {
+      payload = await fetchWeather(config);
+    } catch (error) {
+      payload = await fetchWeather({ provider: 'mock' });
+    }
+    const { temp, conditions, wind, aqi, uv } = payload;
     this.tempEl.textContent = temp;
     this.conditionsEl.textContent = conditions;
     this.windEl.querySelector('strong').textContent = wind;
     this.aqiEl.querySelector('strong').textContent = aqi;
     this.uvEl.querySelector('strong').textContent = uv;
-    this.stateIndex = (this.stateIndex + 1) % weatherStates.length;
   }
 }
